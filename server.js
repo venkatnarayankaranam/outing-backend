@@ -101,11 +101,12 @@ app.use((req, res, next) => {
 const outingRoutes = require('./routes/outings');
 const userRoutes = require('./routes/users');
 
-// Register routes
+// Register routes properly
 app.use('/auth', require('./routes/auth'));
-app.use('/outings', outingRoutes);
-app.use('/dashboard', require('./routes/dashboard'));
-app.use('/users', userRoutes);
+app.use('/users/student', require('./routes/users'));
+
+// Remove duplicate route registrations
+app.use('/api/users', require('./routes/users'));
 
 // Add error handling for 404s
 app.use((req, res) => {

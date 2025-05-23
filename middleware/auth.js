@@ -1,5 +1,8 @@
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const User = require('../models/User');
+
+const DEFAULT_BLOCKS = ['A-Block', 'B-Block', 'C-Block', 'D-Block', 'E-Block'];
 
 const auth = async (req, res, next) => {
   try {
@@ -12,91 +15,82 @@ const auth = async (req, res, next) => {
       });
     }
 
-    // Clean the token
     token = token.replace('Bearer ', '').trim();
-
     if (!token) {
-      throw new Error('Empty token provided');
-    }
-
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'OutingApplication@2026');
-
-      // Check token expiration
-      if (decoded.exp && decoded.exp < Date.now() / 1000) {
-        throw new Error('Token expired');
-      }
-
-      if (decoded.role === 'hostel-incharge') {
-        req.user = {
-          id: decoded.id,
-          email: decoded.email,
-          role: decoded.role,
-          isAdmin: decoded.isAdmin || false,
-          assignedBlocks: decoded.assignedBlocks || ['A-Block', 'B-Block', 'C-Block', 'D-Block', 'E-Block']
-        };
-        return next();
-      } 
-
-      if (decoded.role === 'warden') {
-        req.user = {
-          id: decoded.id,
-          email: decoded.email,
-          role: decoded.role,
-          isAdmin: true,
-          assignedBlocks: ['A-Block', 'B-Block', 'C-Block', 'D-Block', 'E-Block']
-        };
-        console.log('Warden auth:', {
-          email: req.user.email,
-          role: req.user.role,
-          assignedBlocks: req.user.assignedBlocks
-        });
-        return next();
-      }
-      
-      if (decoded.role.includes('-incharge') || ['gate'].includes(decoded.role)) {
-        const floors = decoded.assignedFloor || [];
-        const formattedFloors = Array.isArray(floors) ? floors : [floors];
-        const hostelBlock = decoded.assignedBlock || decoded.hostelBlock;
-        
-        req.user = {
-          id: decoded.id || decoded.email,
-          email: decoded.email,
-          role: decoded.role,
-          assignedBlock: hostelBlock,
-          assignedFloor: formattedFloors,
-          hostelBlock: hostelBlock,
-          floor: formattedFloors
-        };
-
-        console.log('Auth middleware:', {
-          email: req.user.email,
-          role: req.user.role,
-          hostelBlock: req.user.hostelBlock,
-          floors: req.user.assignedFloor
-        });
-
-        return next();
-      }
-
-      // For regular users
-      const user = await User.findById(decoded.id);
-      if (!user) {
-        throw new Error('User not found');
-      }
-
-      req.user = user;
-      return next();
-
-    } catch (jwtError) {
-      console.error('JWT Verification Error:', jwtError);
       return res.status(401).json({
         success: false,
-        message: 'Invalid or expired token'
+        message: 'Empty token provided',
       });
     }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'OutingApplication@2026');
+
+    if (!decoded || !decoded.role) {
+      throw new Error('Invalid token payload');
+    }
+
+    const role = decoded.role;
+
+    if (role === 'hostel-incharge') {
+      req.user = {
+        id: decoded.id,
+        email: decoded.email,
+        role,
+        isAdmin: decoded.isAdmin || false,
+        assignedBlocks: decoded.assignedBlocks || DEFAULT_BLOCKS
+      };
+      return next();
+    }
+
+    if (role === 'warden') {
+      req.user = {
+        id: decoded.id,
+        email: decoded.email,
+        role,
+        isAdmin: true,
+        assignedBlocks: DEFAULT_BLOCKS
+      };
+      console.log('Warden auth:', req.user);
+      return next();
+    }
+
+    if (typeof role === 'string' && (role.includes('-incharge') || role === 'gate')) {
+      const floors = Array.isArray(decoded.assignedFloor) ? decoded.assignedFloor : [decoded.assignedFloor];
+      const hostelBlock = decoded.assignedBlock || decoded.hostelBlock;
+
+      req.user = {
+        id: decoded.id || decoded.email,
+        email: decoded.email,
+        role,
+        assignedBlock: hostelBlock,
+        assignedFloor: floors,
+        hostelBlock,
+        floor: floors
+      };
+
+      console.log('Auth middleware:', req.user);
+      return next();
+    }
+
+    // Regular user fallback
+    if (!decoded.id) {
+      throw new Error('Missing user ID in token');
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(decoded.id)) {
+      throw new Error('Invalid user ID format');
+    }
+
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    req.user = user;
+    return next();
+
   } catch (error) {
-    console.error('Auth error:', error);
+    console.error('Auth error:', error.message);
     return res.status(401).json({
       success: false,
       message: error.message || 'Authentication failed',
@@ -108,14 +102,14 @@ const auth = async (req, res, next) => {
 const checkRole = (roles) => {
   return (req, res, next) => {
     try {
-      const userRole = req.user.role.toLowerCase();
+      const userRole = (req.user?.role || '').toLowerCase();
       const normalizedRoles = roles.map(role => role.toLowerCase());
-      
-      // Handle gate/security role mapping
+
+      // Allow gate role to act as 'security'
       if (userRole === 'gate' && normalizedRoles.includes('security')) {
         return next();
       }
-      
+
       if (!normalizedRoles.includes(userRole)) {
         console.error('Access denied:', {
           userRole,
@@ -132,6 +126,7 @@ const checkRole = (roles) => {
           }
         });
       }
+
       next();
     } catch (error) {
       console.error('Role check error:', error);
@@ -143,4 +138,19 @@ const checkRole = (roles) => {
   };
 };
 
-module.exports = { auth, checkRole };
+const authenticate = (req, res, next) => {
+  try {
+    const token = req.header('Authorization')?.replace('Bearer ', '').trim();
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'No token provided' });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'OutingApplication@2026');
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ success: false, message: 'Invalid token' });
+  }
+};
+
+module.exports = { auth, checkRole, authenticate };

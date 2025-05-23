@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { auth } = require('../middleware/auth'); // Import the auth middleware
+const { auth } = require('../middleware/auth');  
 
 const ADMIN_CREDENTIALS = {
   "floorincharge@kietgroup.com": {
@@ -25,6 +25,14 @@ const ADMIN_CREDENTIALS = {
     password: "Warden@2026",
     role: "warden",
   },
+};
+
+// Placeholder for formatFloor method
+// You can implement your own formatting logic here
+User.formatFloor = function(floor) {
+  if (!floor) return floor;
+  // Example: capitalize first letter, lowercase rest
+  return floor.charAt(0).toUpperCase() + floor.slice(1).toLowerCase();
 };
 
 router.post('/register', async (req, res) => {
@@ -163,18 +171,25 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Update verify endpoint
+// Updated verify endpoint
 router.get('/verify', auth, (req, res) => {
+  const user = req.user;
+
+  const responseUser = {
+    id: user.id || user._id,
+    email: user.email || '',
+    role: user.role || '',
+    isAdmin: user.isAdmin || false,
+    assignedBlock: user.assignedBlock || user.assignedBlocks || null,
+    assignedFloor: user.assignedFloor || user.assignedFloor || [],
+  };
+
   res.json({
     success: true,
-    user: {
-      id: req.user.id,
-      email: req.user.email,
-      role: req.user.role,
-      isAdmin: req.user.isAdmin || false,
-      assignedBlocks: req.user.assignedBlocks || []
-    }
+    user: responseUser
   });
 });
+
+
 
 module.exports = router;
